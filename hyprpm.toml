@@ -11,3 +11,9 @@
   authors = ["Rommmmaha"]
   output = "hyprstretch/hyprstretch.so"
   build = ["make -C hyprstretch"]
+
+[hyprkbptr]
+  description = "Drive the mouse with arrow keys, with crosshair overlay"
+  authors = ["Rommmmaha"]
+  output = "hyprkbptr/hyprkbptr.so"
+  build = ["make -C hyprkbptr"]
