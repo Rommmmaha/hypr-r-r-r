@@ -1,6 +1,6 @@
 # hyprkbptr
 
-A Hyprland plugin to **drive the mouse with the keyboard**. While active, the arrow keys move the cursor (with acceleration while held), `PageUp`/`PageDown` act as left/right mouse buttons, and a half-transparent white crosshair overlay shows the cursor position.
+A Hyprland plugin to **drive the mouse with the keyboard**. While active, the arrow keys move the cursor (with acceleration while held), `PageUp`/`PageDown` act as left/right mouse buttons, `Home`/`End` act as a single mouse-wheel notch up/down per press, and a half-transparent white crosshair overlay shows the cursor position.
 
 All other keys pass through to applications untouched.
 
@@ -12,6 +12,7 @@ All other keys pass through to applications untouched.
 - **Inactive by default.** Nothing is intercepted until you toggle it on.
 - **Arrow keys** move the cursor relative to its position. Speed ramps up the longer a key is held (acceleration), so taps give precise nudges and holds cross the screen. Diagonals work by holding two arrows.
 - **PageUp** holds the **left** mouse button, **PageDown** holds the **right** mouse button. Hold the key to drag, release to drop — same as a physical button.
+- **Home** sends one **wheel-up** notch, **End** sends one **wheel-down** notch. Each physical press fires once; holding the key (key repeat) does not scroll further until you release and press again.
 - **Super stands down.** While Super is held, kbptr passes every key through, so your `SUPER + ...` keybinds keep working. Key releases always clean up tracked state, so nothing gets stuck.
 - **Overlay.** While active, each monitor shows fullscreen horizontal + vertical crosshair lines through the cursor plus a small cross marker at the cursor itself, in white at 50% opacity.
 - Movement is routed through the normal input pipeline, so hover, window focus, and relative-pointer motion (games) behave exactly like a real mouse.
@@ -56,9 +57,10 @@ Speeds are currently hardcoded in `main.cpp`:
 
 | Constant | Default | Meaning |
 | --- | --- | --- |
-| `MOVE_BASE_SPEED` | `420 px/s` | Speed right after key press. |
+| `MOVE_BASE_SPEED` | `120 px/s` | Speed right after key press. |
 | `MOVE_ACCEL` | `2800 px/s²` | Acceleration while held. |
 | `MOVE_MAX_SPEED` | `2500 px/s` | Speed cap. |
 | `TICK_STEP` | `8 ms` | Movement update interval. |
+| `WHEEL_DELTA` / `WHEEL_DISCRETE` | `15` / `120` | Smooth / v120 discrete units sent per Home/End press (one wheel notch). |
 
 Rebuild and reload the plugin after changing them.

@@ -26,9 +26,11 @@ extern "C" {
 // ============================================================================
 // Tuning (hardcoded)
 // ============================================================================
-constexpr double MOVE_BASE_SPEED = 420.0;  // px/s when a key is first pressed
+constexpr double MOVE_BASE_SPEED = 120.0;  // px/s when a key is first pressed
 constexpr double MOVE_ACCEL = 2800.0;      // px/s^2 while held
 constexpr double MOVE_MAX_SPEED = 2500.0;  // px/s cap
+constexpr double WHEEL_DELTA = 15.0;       // smooth scroll units per notch
+constexpr int32_t WHEEL_DISCRETE = 120;    // v120 discrete units per notch
 constexpr auto TICK_STEP = std::chrono::milliseconds(8);
 // Arrow indices: 0=Up 1=Down 2=Left 3=Right
 struct SArrowState {
@@ -39,6 +41,8 @@ static bool g_active = false;
 static std::array<SArrowState, 4> g_arrows;
 static bool g_btnLeftHeld = false;
 static bool g_btnRightHeld = false;
+static bool g_wheelUpHeld = false;
+static bool g_wheelDownHeld = false;
 static Time::steady_tp g_lastMove{};
 static SP<CEventLoopTimer> g_timer = nullptr;
 static CHyprSignalListener g_renderListener;
@@ -120,6 +124,34 @@ static uint32_t keysymToButton(SP<IKeyboard> kb, uint32_t keycode) {
       return 0;
   }
 }
+// Returns -1 for scroll-up, +1 for scroll-down, 0 when not a wheel key.
+// Home -> wheel up, End -> wheel down (single notch per press).
+static int keysymToWheel(SP<IKeyboard> kb, uint32_t keycode) {
+  if (!kb || !kb->m_xkbState)
+    return 0;
+  const xkb_keysym_t sym = xkb_state_key_get_one_sym(kb->m_xkbState, keycode + 8);
+  switch (sym) {
+    case XKB_KEY_Home:
+    case XKB_KEY_KP_Home:
+      return -1;
+    case XKB_KEY_End:
+    case XKB_KEY_KP_End:
+      return 1;
+    default:
+      return 0;
+  }
+}
+static void sendWheel(int direction) {
+  IPointer::SAxisEvent ev;
+  ev.timeMs = nowMs();
+  ev.source = WL_POINTER_AXIS_SOURCE_WHEEL;
+  ev.axis = WL_POINTER_AXIS_VERTICAL_SCROLL;
+  ev.relativeDirection = WL_POINTER_AXIS_RELATIVE_DIRECTION_IDENTICAL;
+  ev.delta = (direction < 0 ? -WHEEL_DELTA : WHEEL_DELTA);
+  ev.deltaDiscrete = (direction < 0 ? -WHEEL_DISCRETE : WHEEL_DISCRETE);
+  ev.mouse = true;
+  g_pInputManager->onMouseWheel(ev, nullptr);
+}
 static void setActive(bool on) {
   if (on == g_active)
     return;
@@ -128,12 +160,16 @@ static void setActive(bool on) {
   if (on) {
     for (auto& a : g_arrows)
       a = SArrowState{};
+    g_wheelUpHeld = false;
+    g_wheelDownHeld = false;
     g_lastMove = now;
     if (g_timer)
       g_timer->updateTimeout(TICK_STEP);
   } else {
     releaseButton(BTN_LEFT, g_btnLeftHeld);
     releaseButton(BTN_RIGHT, g_btnRightHeld);
+    g_wheelUpHeld = false;
+    g_wheelDownHeld = false;
     for (auto& a : g_arrows)
       a = SArrowState{};
     if (g_timer)
@@ -195,8 +231,8 @@ static void onTick() {
 }
 // ============================================================================
 // Keyboard hook while active: arrows move, PageUp/PageDown click,
-// everything else passes through. While Super is held hyprkbptr stands down
-// entirely so keybinds keep working.
+// Home/End send one wheel notch per press, everything else passes through.
+// While Super is held hyprkbptr stands down entirely so keybinds keep working.
 // ============================================================================
 using FnOnKeyboardKey = void (*)(CInputManager*, const IKeyboard::SKeyEvent&, SP<IKeyboard>);
 void hkOnKeyboardKey(CInputManager* mgr, const IKeyboard::SKeyEvent& ev, SP<IKeyboard> kb) {
@@ -216,6 +252,11 @@ void hkOnKeyboardKey(CInputManager* mgr, const IKeyboard::SKeyEvent& ev, SP<IKey
       releaseButton(BTN_LEFT, g_btnLeftHeld);
     else if (releasedBtn == BTN_RIGHT)
       releaseButton(BTN_RIGHT, g_btnRightHeld);
+    const int releasedWheel = keysymToWheel(kb, ev.keycode);
+    if (releasedWheel < 0)
+      g_wheelUpHeld = false;
+    else if (releasedWheel > 0)
+      g_wheelDownHeld = false;
     callOriginal();
     return;
   }
@@ -241,6 +282,23 @@ void hkOnKeyboardKey(CInputManager* mgr, const IKeyboard::SKeyEvent& ev, SP<IKey
   }
   if (btn == BTN_RIGHT) {
     pressButton(BTN_RIGHT, g_btnRightHeld);
+    return;  // swallowed
+  }
+  // Home/End fire a single wheel notch per physical press: repeats while held
+  // are swallowed without re-firing.
+  const int wheel = keysymToWheel(kb, ev.keycode);
+  if (wheel < 0) {
+    if (!g_wheelUpHeld) {
+      g_wheelUpHeld = true;
+      sendWheel(-1);
+    }
+    return;  // swallowed
+  }
+  if (wheel > 0) {
+    if (!g_wheelDownHeld) {
+      g_wheelDownHeld = true;
+      sendWheel(1);
+    }
     return;  // swallowed
   }
   callOriginal();
