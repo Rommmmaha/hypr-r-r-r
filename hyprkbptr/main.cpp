@@ -26,7 +26,7 @@ extern "C" {
 // ============================================================================
 // Tuning (hardcoded)
 // ============================================================================
-constexpr double MOVE_BASE_SPEED = 120.0;  // px/s when a key is first pressed
+constexpr double MOVE_BASE_SPEED = 40.0;  // px/s when a key is first pressed
 constexpr double MOVE_ACCEL = 2800.0;      // px/s^2 while held
 constexpr double MOVE_MAX_SPEED = 2500.0;  // px/s cap
 constexpr double WHEEL_DELTA = 15.0;       // smooth scroll units per notch

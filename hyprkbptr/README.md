@@ -57,7 +57,7 @@ Speeds are currently hardcoded in `main.cpp`:
 
 | Constant | Default | Meaning |
 | --- | --- | --- |
-| `MOVE_BASE_SPEED` | `120 px/s` | Speed right after key press. |
+| `MOVE_BASE_SPEED` | `40 px/s` | Speed right after key press. |
 | `MOVE_ACCEL` | `2800 px/s²` | Acceleration while held. |
 | `MOVE_MAX_SPEED` | `2500 px/s` | Speed cap. |
 | `TICK_STEP` | `8 ms` | Movement update interval. |
