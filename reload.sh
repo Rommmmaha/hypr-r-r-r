@@ -28,7 +28,7 @@ if [ ! -d "$PLUGIN_NAME" ]; then
 fi
 
 ABS_SO="$(pwd)/$PLUGIN_NAME/$PLUGIN_NAME.so"
-HYPRPM_SO="/var/cache/hyprpm/$USER/$PLUGIN_NAME/$PLUGIN_NAME.so"
+HYPRPM_SO="/var/cache/hyprpm/$USER/hypr-r-r-r/$PLUGIN_NAME.so"
 
 case "$cmd" in
   load)
