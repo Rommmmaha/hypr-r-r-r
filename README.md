@@ -5,7 +5,7 @@ A collection of Hyprland plugins, installable via `hyprpm`.
 | Plugin | What it does |
 | --- | --- |
 | [hyprstretch](hyprstretch/) | Resize windows without changing their resolution (stretched resolutions for games). |
-| [hyprkbptr](hyprkbptr/) | Drive the mouse with arrow keys, with a crosshair overlay. |
+| [hyprkbptr](hyprkbptr/) | Drive the mouse with arrow keys. |
 
 ## Installation
 

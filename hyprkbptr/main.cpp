@@ -7,16 +7,10 @@
 #include <cmath>
 #include <hyprland/src/config/lua/bindings/LuaBindingsInternal.hpp>
 #include <hyprland/src/devices/IKeyboard.hpp>
-#include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/helpers/time/Time.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopManager.hpp>
 #include <hyprland/src/managers/eventLoop/EventLoopTimer.hpp>
 #include <hyprland/src/managers/input/InputManager.hpp>
-#include <hyprland/src/output/Monitor.hpp>
-#include <hyprland/src/pointer/PointerManager.hpp>
-#include <hyprland/src/render/Renderer.hpp>
-#include <hyprland/src/render/pass/RectPassElement.hpp>
-#include <hyprland/src/state/MonitorState.hpp>
 
 #include "globals.hpp"
 extern "C" {
@@ -45,7 +39,6 @@ static bool g_wheelUpHeld = false;
 static bool g_wheelDownHeld = false;
 static Time::steady_tp g_lastMove{};
 static SP<CEventLoopTimer> g_timer = nullptr;
-static CHyprSignalListener g_renderListener;
 inline CFunctionHook* g_pKeyboardHook = nullptr;
 // ============================================================================
 // Helpers
@@ -79,12 +72,6 @@ static int keysymToArrow(SP<IKeyboard> kb, uint32_t keycode) {
       return -1;
   }
 }
-static void damageAllMonitors() {
-  for (const auto& m : State::monitorState()->monitors()) {
-    if (m)
-      g_pHyprRenderer->damageMonitor(m);
-  }
-}
 static void pressButton(uint32_t button, bool& heldFlag) {
   if (heldFlag)
     return;
@@ -108,34 +95,34 @@ static void releaseButton(uint32_t button, bool& heldFlag) {
   g_pInputManager->onMouseButton(ev, nullptr);
 }
 // Returns mouse button code for click hotkeys, or 0 when the key is not one.
-// PageUp -> left button, PageDown -> right button (hold-to-drag).
+// End -> left button, Home -> right button (hold-to-drag).
 static uint32_t keysymToButton(SP<IKeyboard> kb, uint32_t keycode) {
   if (!kb || !kb->m_xkbState)
     return 0;
   const xkb_keysym_t sym = xkb_state_key_get_one_sym(kb->m_xkbState, keycode + 8);
   switch (sym) {
-    case XKB_KEY_Page_Up:
-    case XKB_KEY_KP_Page_Up:
+    case XKB_KEY_End:
+    case XKB_KEY_KP_End:
       return BTN_LEFT;
-    case XKB_KEY_Page_Down:
-    case XKB_KEY_KP_Page_Down:
+    case XKB_KEY_Home:
+    case XKB_KEY_KP_Home:
       return BTN_RIGHT;
     default:
       return 0;
   }
 }
 // Returns -1 for scroll-up, +1 for scroll-down, 0 when not a wheel key.
-// Home -> wheel up, End -> wheel down (single notch per press).
+// PageUp -> wheel up, PageDown -> wheel down (single notch per press).
 static int keysymToWheel(SP<IKeyboard> kb, uint32_t keycode) {
   if (!kb || !kb->m_xkbState)
     return 0;
   const xkb_keysym_t sym = xkb_state_key_get_one_sym(kb->m_xkbState, keycode + 8);
   switch (sym) {
-    case XKB_KEY_Home:
-    case XKB_KEY_KP_Home:
+    case XKB_KEY_Page_Up:
+    case XKB_KEY_KP_Page_Up:
       return -1;
-    case XKB_KEY_End:
-    case XKB_KEY_KP_End:
+    case XKB_KEY_Page_Down:
+    case XKB_KEY_KP_Page_Down:
       return 1;
     default:
       return 0;
@@ -175,7 +162,6 @@ static void setActive(bool on) {
     if (g_timer)
       g_timer->updateTimeout(std::nullopt);
   }
-  damageAllMonitors();
 }
 // ============================================================================
 // Movement timer (main thread, via Hyprland event loop)
@@ -227,11 +213,11 @@ static void onTick() {
   motionEv.mouse = true;
   motionEv.device = nullptr;  // synthetic: onMouseMoved null-checks device
   g_pInputManager->onMouseMoved(motionEv);
-  damageAllMonitors();
 }
 // ============================================================================
-// Keyboard hook while active: arrows move, PageUp/PageDown click,
-// Home/End send one wheel notch per press, everything else passes through.
+// Keyboard hook while active: arrows move, End/Home click,
+// PageUp/PageDown send one wheel notch per press, everything else passes
+// through.
 // While Super is held hyprkbptr stands down entirely so keybinds keep working.
 // ============================================================================
 using FnOnKeyboardKey = void (*)(CInputManager*, const IKeyboard::SKeyEvent&, SP<IKeyboard>);
@@ -284,8 +270,8 @@ void hkOnKeyboardKey(CInputManager* mgr, const IKeyboard::SKeyEvent& ev, SP<IKey
     pressButton(BTN_RIGHT, g_btnRightHeld);
     return;  // swallowed
   }
-  // Home/End fire a single wheel notch per physical press: repeats while held
-  // are swallowed without re-firing.
+  // PageUp/PageDown fire a single wheel notch per physical press: repeats while
+  // held are swallowed without re-firing.
   const int wheel = keysymToWheel(kb, ev.keycode);
   if (wheel < 0) {
     if (!g_wheelUpHeld) {
@@ -302,27 +288,6 @@ void hkOnKeyboardKey(CInputManager* mgr, const IKeyboard::SKeyEvent& ev, SP<IKey
     return;  // swallowed
   }
   callOriginal();
-}
-// ============================================================================
-// Overlay: fullscreen crosshair lines + center cross at cursor
-// ============================================================================
-static void onRenderStage(eRenderStage stage) {
-  if (stage != RENDER_LAST_MOMENT || !g_active)
-    return;
-  const PHLMONITOR mon = g_pHyprRenderer->renderData().pMonitor.lock();
-  if (!mon)
-    return;
-  const Vector2D mpos = mon->position();
-  const Vector2D msize = mon->size();
-  const Vector2D cur = Pointer::mgr()->position() - mpos;
-  if (cur.x < 0 || cur.y < 0 || cur.x >= msize.x || cur.y >= msize.y)
-    return;  // cursor is on another monitor
-  const CHyprColor col(1.F, 1.F, 1.F, 0.5F);
-  const double t = 1.0;
-  g_pHyprRenderer->draw(CRectPassElement::SRectData{.box = CBox{0, std::floor(cur.y), msize.x, t}, .color = col});
-  g_pHyprRenderer->draw(CRectPassElement::SRectData{.box = CBox{std::floor(cur.x), 0, t, msize.y}, .color = col});
-  g_pHyprRenderer->draw(CRectPassElement::SRectData{.box = CBox{std::floor(cur.x) - 12, std::floor(cur.y) - 1, 25, 3}, .color = col});
-  g_pHyprRenderer->draw(CRectPassElement::SRectData{.box = CBox{std::floor(cur.x) - 1, std::floor(cur.y) - 12, 3, 25}, .color = col});
 }
 // ============================================================================
 // Toggle entry points
@@ -359,24 +324,22 @@ APICALL EXPORT PLUGIN_DESCRIPTION_INFO PLUGIN_INIT(HANDLE handle) {
   }
   if (!g_pKeyboardHook || !g_pKeyboardHook->hook())
     throw std::runtime_error("[hyprkbptr] Failed to hook onKeyboardKey");
-  g_renderListener = Event::bus()->m_events.render.stage.listen([](eRenderStage stage) { onRenderStage(stage); });
   g_timer = makeShared<CEventLoopTimer>(std::nullopt, [](SP<CEventLoopTimer>, void*) { onTick(); }, nullptr);
   g_pEventLoopManager->addTimer(g_timer);
   HyprlandAPI::addDispatcherV2(PHANDLE, "hyprkbptr:toggle", ::toggleDispatcher);
   HyprlandAPI::addLuaFunction(PHANDLE, "hyprkbptr", "toggle", ::toggleLua);
   HyprlandAPI::addLuaFunction(PHANDLE, "hyprkbptr", "enable", ::enableLua);
   HyprlandAPI::addLuaFunction(PHANDLE, "hyprkbptr", "disable", ::disableLua);
-  return {"hyprkbptr", "Drive the mouse with arrow keys, with crosshair overlay", "Rommmmaha", "1.0"};
+  return {"hyprkbptr", "Drive the mouse with arrow keys", "Rommmmaha", "1.0"};
 }
 APICALL EXPORT void PLUGIN_EXIT() {
-  // Tear everything down BEFORE dlclose: any surviving callback (render
-  // listener, event-loop timer) would jump into unmapped memory on the next
-  // frame/tick and take the compositor down.
+  // Tear everything down BEFORE dlclose: any surviving callback (event-loop
+  // timer) would jump into unmapped memory on the next tick and take the
+  // compositor down.
   setActive(false);
   if (g_timer) {
     g_timer->cancel();
     g_pEventLoopManager->removeTimer(g_timer);
     g_timer.reset();
   }
-  g_renderListener.reset();
 }
