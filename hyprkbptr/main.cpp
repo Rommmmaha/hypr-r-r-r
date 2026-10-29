@@ -247,7 +247,7 @@ void hkOnKeyboardKey(CInputManager* mgr, const IKeyboard::SKeyEvent& ev, SP<IKey
     return;
   }
   // Stands down while Super is held so Super-based keybinds are untouched.
-  const bool super = kb && (kb->getModifiers() & HL_MODIFIER_META);
+  const bool super = kb && (kb->getModifiers() & Input::HL_MODIFIER_META);
   if (super) {
     callOriginal();
     return;

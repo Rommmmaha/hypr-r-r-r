@@ -1,7 +1,7 @@
 #define WLR_USE_UNSTABLE
 #include <array>
 #include <hyprland/src/config/lua/bindings/LuaBindingsInternal.hpp>
-#include <hyprland/src/desktop/view/Window.hpp>
+#include <hyprland/src/desktop/view/window/Window.hpp>
 #include <hyprland/src/event/EventBus.hpp>
 #include <hyprland/src/layout/target/WindowTarget.hpp>
 #include <hyprland/src/managers/SeatManager.hpp>
@@ -29,8 +29,8 @@ using FnXDGToplevelSetSize = uint32_t (*)(CXDGToplevelResource*, const Vector2D&
 using FnWindowMinSize = std::optional<Vector2D> (*)(Layout::CWindowTarget*);
 using FnWindowMaxSize = std::optional<Vector2D> (*)(Layout::CWindowTarget*);
 using FnWindowClampSize = bool (*)(Desktop::View::CWindow*, std::optional<Vector2D>, std::optional<Vector2D>);
-using FnCalculateUVForSurface = void (*)(Render::IElementRenderer*, PHLWINDOW, SP<CWLSurfaceResource>, PHLMONITOR, bool, const Vector2D&, const Vector2D&, bool);
-using FnWLSurfaceComputeDamage = CRegion (*)(Desktop::View::CWLSurface*);
+using FnCalculateUVForSurface = void (*)(Render::IElementRenderer*, Render::CRenderContext&, PHLWINDOW, SP<CWLSurfaceResource>, PHLMONITOR, bool, const Vector2D&, const Vector2D&, bool);
+using FnWLSurfaceComputeDamage = CRegion (*)(Desktop::View::CWLSurface*, const std::optional<CBox>&);
 inline CFunctionHook* g_pPointerMotionHook = nullptr;
 inline CFunctionHook* g_pXWaylandConfigureHook = nullptr;
 inline CFunctionHook* g_pXDGToplevelSetSizeHook = nullptr;
@@ -74,13 +74,13 @@ void hkSendPointerMotion(CSeatManager* seatManager, uint32_t timeMsec, const Vec
   Vector2D newCoords = localCoords;
   const auto focusState = Desktop::focusState();
   const auto window = focusState ? focusState->window() : nullptr;
-  if (window && isActive(window.get(), window->m_initialClass)) {
+  if (window && isActive(window.get(), window->metadata().initialAppID())) {
     const Vector2D windowSize = window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT);
     const auto wlSurface = window->wlSurface();
     const auto surfaceResource = wlSurface ? wlSurface->resource() : nullptr;
     if (surfaceResource && surfaceResource->m_current.bufferSize.x > 0 && surfaceResource->m_current.bufferSize.y > 0) {
-      newCoords.x *= (surfaceResource->m_current.bufferSize.x / windowSize.x) / window->m_X11SurfaceScaledBy;
-      newCoords.y *= (surfaceResource->m_current.bufferSize.y / windowSize.y) / window->m_X11SurfaceScaledBy;
+      newCoords.x *= (surfaceResource->m_current.bufferSize.x / windowSize.x) / window->backend().surfaceScale();
+      newCoords.y *= (surfaceResource->m_current.bufferSize.y / windowSize.y) / window->backend().surfaceScale();
     }
   }
   callOriginal<FnPointerMotion>(g_pPointerMotionHook, seatManager, timeMsec, newCoords);
@@ -90,9 +90,9 @@ void hkXWaylandConfigure(CXWaylandSurface* surface, const CBox& box) {
     if (const auto surfaceResource = surface->m_surface.lock()) {
       if (const auto wlSurface = Desktop::View::CWLSurface::fromResource(surfaceResource)) {
         if (const auto window = Desktop::View::CWindow::fromView(wlSurface->view())) {
-          if (isActive(window.get(), window->m_initialClass)) {
+          if (isActive(window.get(), window->metadata().initialAppID())) {
             wlSurface->m_fillIgnoreSmall = true;
-            if (const auto CONFIG = findConfig(window->m_initialClass); CONFIG && CONFIG->res && g_initializedWindows.emplace(window.get()).second) {
+            if (const auto CONFIG = findConfig(window->metadata().initialAppID()); CONFIG && CONFIG->res && g_initializedWindows.emplace(window.get()).second) {
               CBox newBox = box;
               newBox.w = CONFIG->res->x;
               newBox.h = CONFIG->res->y;
@@ -110,10 +110,10 @@ uint32_t hkXDGToplevelSetSize(CXDGToplevelResource* toplevel, const Vector2D& si
   Vector2D newSize = size;
   if (toplevel) {
     if (const auto window = toplevel->m_window.get()) {
-      if (isActive(window, window->m_initialClass)) {
+      if (isActive(window, window->metadata().initialAppID())) {
         if (window->wlSurface())
           window->wlSurface()->m_fillIgnoreSmall = true;
-        if (const auto CONFIG = findConfig(window->m_initialClass); CONFIG && CONFIG->res && g_initializedWindows.emplace(window).second)
+        if (const auto CONFIG = findConfig(window->metadata().initialAppID()); CONFIG && CONFIG->res && g_initializedWindows.emplace(window).second)
           return callOriginal<FnXDGToplevelSetSize>(g_pXDGToplevelSetSizeHook, toplevel, *CONFIG->res);
         const auto surfaceResource = window->wlSurface() ? window->wlSurface()->resource() : nullptr;
         if (surfaceResource && surfaceResource->m_current.size.x > 0 && surfaceResource->m_current.size.y > 0)
@@ -125,34 +125,34 @@ uint32_t hkXDGToplevelSetSize(CXDGToplevelResource* toplevel, const Vector2D& si
 }
 std::optional<Vector2D> hkWindowMinSize(Layout::CWindowTarget* target) {
   const auto window = target ? target->window() : nullptr;
-  if (window && isActive(window.get(), window->m_initialClass))
+  if (window && isActive(window.get(), window->metadata().initialAppID()))
     return Vector2D{64, 64};
   return callOriginal<FnWindowMinSize>(g_pWindowMinSizeHook, target);
 }
 std::optional<Vector2D> hkWindowMaxSize(Layout::CWindowTarget* target) {
   const auto window = target ? target->window() : nullptr;
-  if (window && isActive(window.get(), window->m_initialClass))
+  if (window && isActive(window.get(), window->metadata().initialAppID()))
     return std::nullopt;
   return callOriginal<FnWindowMaxSize>(g_pWindowMaxSizeHook, target);
 }
 bool hkWindowClampSize(Desktop::View::CWindow* window, std::optional<Vector2D> minSize, std::optional<Vector2D> maxSize) {
-  if (window && isActive(window, window->m_initialClass))
+  if (window && isActive(window, window->metadata().initialAppID()))
     return callOriginal<FnWindowClampSize>(g_pWindowClampSizeHook, window, Vector2D{64, 64}, std::nullopt);
   return callOriginal<FnWindowClampSize>(g_pWindowClampSizeHook, window, minSize, maxSize);
 }
-void hkCalculateUVForSurface(Render::IElementRenderer* renderer, PHLWINDOW window, SP<CWLSurfaceResource> surface, PHLMONITOR monitor, bool main, const Vector2D& projSize, const Vector2D& projSizeUnscaled, bool fixMisalignedFSV1) {
-  if (window && isActive(window.get(), window->m_initialClass)) {
-    g_pHyprRenderer->m_renderData.primarySurfaceUVTopLeft = Vector2D(-1, -1);
-    g_pHyprRenderer->m_renderData.primarySurfaceUVBottomRight = Vector2D(-1, -1);
+void hkCalculateUVForSurface(Render::IElementRenderer* renderer, Render::CRenderContext& ctx, PHLWINDOW window, SP<CWLSurfaceResource> surface, PHLMONITOR monitor, bool main, const Vector2D& projSize, const Vector2D& projSizeUnscaled, bool fixMisalignedFSV1) {
+  if (window && isActive(window.get(), window->metadata().initialAppID())) {
+    ctx.m_data.primarySurfaceUVTopLeft = Vector2D(-1, -1);
+    ctx.m_data.primarySurfaceUVBottomRight = Vector2D(-1, -1);
     return;
   }
-  callOriginal<FnCalculateUVForSurface>(g_pCalculateUVHook, renderer, window, surface, monitor, main, projSize, projSizeUnscaled, fixMisalignedFSV1);
+  callOriginal<FnCalculateUVForSurface>(g_pCalculateUVHook, renderer, ctx, window, surface, monitor, main, projSize, projSizeUnscaled, fixMisalignedFSV1);
 }
-CRegion hkWLSurfaceComputeDamage(Desktop::View::CWLSurface* wlSurface) {
-  const auto damageRegion = callOriginal<FnWLSurfaceComputeDamage>(g_pWLSurfaceComputeDamageHook, wlSurface);
+CRegion hkWLSurfaceComputeDamage(Desktop::View::CWLSurface* wlSurface, const std::optional<CBox>& box) {
+  const auto damageRegion = callOriginal<FnWLSurfaceComputeDamage>(g_pWLSurfaceComputeDamageHook, wlSurface, box);
   if (wlSurface && wlSurface->exists()) {
     if (const auto window = Desktop::View::CWindow::fromView(wlSurface->view())) {
-      if (isActive(window.get(), window->m_initialClass)) {
+      if (isActive(window.get(), window->metadata().initialAppID())) {
         if (const auto monitor = window->m_monitor.lock()) {
           g_pHyprRenderer->damageMonitor(monitor);
         } else {
@@ -164,24 +164,19 @@ CRegion hkWLSurfaceComputeDamage(Desktop::View::CWLSurface* wlSurface) {
   return damageRegion;
 }
 static void refreshWindowSize(Desktop::View::CWindow* window) {
-  if (const auto XDG = window->m_xdgSurface.lock()) {
-    if (const auto TOPLEVEL = XDG->m_toplevel.lock())
-      TOPLEVEL->setSize(window->size(Desktop::View::IGeometric::GEOMETRIC_CURRENT));
-  } else if (const auto XWAY = window->m_xwaylandSurface.lock()) {
-    XWAY->configure(window->getWindowMainSurfaceBox());
-  }
+  window->backend().configure(window->getWindowMainSurfaceBox(), window->m_monitor.lock(), true);
 }
 static bool toggleFocusedWindow() {
   const auto focusState = Desktop::focusState();
   const auto window = focusState ? focusState->window() : nullptr;
   if (!window)
     return false;
-  const std::string appClass = window->m_initialClass;
+  const std::string appClass = window->metadata().initialAppID();
   const bool isOn = isActive(window.get(), appClass);
   if (isOn) {
     if (!g_enabledWindows.erase(window.get()))
       g_disabledWindows.insert(window.get());
-    if (window->m_isFloating) {
+    if (window->isFloating()) {
       window->clampWindowSize(window->minSize(), window->maxSize());
       window->finishAnimation();
     }
