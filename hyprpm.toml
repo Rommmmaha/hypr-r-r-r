@@ -3,7 +3,7 @@
   authors = ["Rommmmaha"]
   commit_pins = [
     # ["<Hyprland-commit-hash>", "<Plugin-commit-hash>"]
-    ["0aa6745f705f2c4b0a5004eb019ef76e5bbdb426", "890dc00004c77a01083ac4eb6df2c0e82de77897"],
+    ["0aa6745f705f2c4b0a5004eb019ef76e5bbdb426", "5ade78ad42f20571d6dfdd85b72cb3dcb8cdd0e8"],
   ]
 
 [hyprstretch]
